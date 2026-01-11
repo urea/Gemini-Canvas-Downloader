@@ -373,7 +373,7 @@ async function tryExtractCode(btn) {
 /**
  * convertHtmlToMarkdown
  * HTML構造を解析して、Markdownテキストに変換する関数。
- * ★ v52.2の関数をベースに、v39/54の強化された変換ルール（強調、リンク等）を追加・統合。
+ * ★ テーブル、順序付きリスト、引用の変換ロジックを追加。
  *
  * @param {HTMLElement} element - Markdownコンテナ要素
  * @returns {string} 復元されたMarkdownテキスト
@@ -384,8 +384,7 @@ function convertHtmlToMarkdown(element) {
     for (const node of element.childNodes) {
         // テキストノードの場合
         if (node.nodeType === Node.TEXT_NODE) {
-            const text = node.textContent;
-            if (text.length > 0) md += text;
+            md += node.textContent;
             continue;
         }
         
@@ -393,6 +392,26 @@ function convertHtmlToMarkdown(element) {
         if (node.nodeType === Node.ELEMENT_NODE) {
             const tagName = node.tagName.toLowerCase();
             if (window.getComputedStyle(node).display === 'none') continue;
+
+            // 【更新】テーブル、リスト、引用は特別処理
+            if (tagName === 'table') {
+                md += convertTableToMarkdown(node) + '\n\n';
+                continue;
+            }
+            if (tagName === 'ol' || tagName === 'ul') {
+                md += convertListToMarkdown(node);
+                continue;
+            }
+            if (tagName === 'blockquote') {
+                const innerContent = convertHtmlToMarkdown(node);
+                const quoteContent = innerContent.trim().split('\n').map(line => `> ${line}`).join('\n');
+                md += `\n${quoteContent}\n\n`;
+                continue;
+            }
+             if (tagName === 'li') { // リスト外のliはフォールバック
+                md += `- ${convertHtmlToMarkdown(node).trim()}\n`;
+                continue;
+            }
             
             // 再帰的に中身を変換
             const innerContent = convertHtmlToMarkdown(node);
@@ -408,16 +427,14 @@ function convertHtmlToMarkdown(element) {
                 case 'div': md += `${innerContent}\n`; break;
                 case 'br': md += `\n`; break;
                 
-                // 【強化ポイント】v52.2になかった強調・リンク・画像・水平線の処理を追加
-                case 'strong': case 'b':  md += ` **${innerContent}** `; break;
-                case 'em': case 'i':  md += ` *${innerContent}* `; break;
+                case 'strong': case 'b':  md += `**${innerContent}**`; break;
+                case 'em': case 'i':  md += `*${innerContent}*`; break;
                 case 'a': md += `[${innerContent}](${node.getAttribute('href')||''})`; break;
                 case 'img': md += `![${node.getAttribute('alt')||''}](${node.getAttribute('src')||''})`; break;
                 case 'hr': md += `\n---\n\n`; break;
-
-                case 'li': md += `- ${innerContent}\n`; break; // リスト
-                case 'pre': md += `\n\`\`\`\n${node.innerText}\n\`\`\`\n\n`; continue; // コードブロックはinnerTextで改行維持
-                case 'code': if (node.parentElement.tagName !== 'PRE') md += ` \`${innerContent}\` `; break; // インラインコード
+                
+                case 'pre': md += `\n\`\`\`\n${node.innerText}\n\`\`\`\n\n`; continue;
+                case 'code': if (node.parentElement.tagName !== 'PRE') md += `\`${innerContent}\``; break;
                 
                 default: md += innerContent;
             }
@@ -425,6 +442,64 @@ function convertHtmlToMarkdown(element) {
     }
     // 連続する空行を整理して返す
     return md.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * 【新規】convertListToMarkdown
+ * HTMLの<ul>または<ol>要素を解析し、Markdownのリスト形式に変換するヘルパー関数。
+ * @param {HTMLUListElement|HTMLOListElement} listElement - 変換対象のリスト要素
+ * @returns {string} Markdown形式のリスト文字列
+ */
+function convertListToMarkdown(listElement) {
+    let listMd = '\n';
+    const isOrdered = listElement.tagName.toLowerCase() === 'ol';
+    const items = Array.from(listElement.children).filter(child => child.tagName.toLowerCase() === 'li');
+
+    items.forEach((item, index) => {
+        const itemContent = convertHtmlToMarkdown(item).trim();
+        const prefix = isOrdered ? `${index + 1}. ` : '- ';
+        
+        const lines = itemContent.split('\n');
+        listMd += prefix + lines[0] + '\n';
+        for (let i = 1; i < lines.length; i++) {
+            // 2行目以降はインデントを追加
+            listMd += '  ' + lines[i] + '\n';
+        }
+    });
+    return listMd;
+}
+
+/**
+ * 【更新】convertTableToMarkdown
+ * HTMLの<table>要素を解析し、Markdownのテーブル形式に変換するヘルパー関数。
+ * @param {HTMLTableElement} tableElement - 変換対象のテーブル要素
+ * @returns {string} Markdown形式のテーブル文字列
+ */
+function convertTableToMarkdown(tableElement) {
+    let md = '';
+    const rows = Array.from(tableElement.rows);
+    if (rows.length === 0) return '';
+
+    // ヘッダー行を特定 (thead > tr または tbody > tr[0])
+    const headerRow = rows.shift(); // 最初の行をヘッダーとみなす
+    const headerCells = Array.from(headerRow.cells);
+    md += '| ' + headerCells.map(cell => (cell.innerText || '').trim().replace(/\|/g, '\\|')).join(' | ') + ' |\n';
+
+    // 区切り行
+    md += '|' + headerCells.map(() => '---').join('|') + '|\n';
+
+    // データ行
+    for (const row of rows) {
+        const cells = Array.from(row.cells);
+        // ヘッダーの列数に合わせる（足りない分は空セルで埋める）
+        const rowContent = headerCells.map((_, i) => {
+            const cell = cells[i];
+            return (cell ? (cell.innerText || '') : '').trim().replace(/\|/g, '\\|');
+        });
+        md += '| ' + rowContent.join(' | ') + ' |\n';
+    }
+
+    return md;
 }
 
 /**

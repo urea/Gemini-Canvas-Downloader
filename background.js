@@ -11,7 +11,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     chrome.downloads.download({
       url: request.url,
       filename: request.filename, // content.jsから送られたファイル名をそのまま使う
-      conflictAction: 'overwrite', // 同名ファイルは警告なしで上書き
+      
       saveAs: false
     }, (downloadId) => {
       // Chrome APIのコールバック内で返信

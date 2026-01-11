@@ -5,10 +5,8 @@
   "description": "GeminiのCanvasで開いているファイルをワンクリックで上書き保存・ダウンロードします。",
   "permissions": [
     "activeTab",
-    "scripting",
     "downloads",
-    "clipboardRead",
-    "clipboardWrite"
+    "clipboardRead"
   ],
   "background": {
     "service_worker": "background.js"
